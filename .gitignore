@@ -1,5 +1,5 @@
 HELP.md
-target/
+#target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
@@ -31,3 +31,37 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Configuration files ###
+# Archivos de configuración con credenciales
+application-local.properties
+application-dev.properties
+application-prod.properties
+*.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Archivos de configuración personalizados
+config/application-*.properties
+
+# Archivos de secrets
+secrets.properties
+credentials.properties
+
+# Logs
+*.log
+logs/
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+
+# Archivos temporales
+*.tmp
+*.temp
+
+# Backup files
+*.bak
+*.backup
