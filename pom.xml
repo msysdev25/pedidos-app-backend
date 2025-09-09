@@ -30,8 +30,8 @@
         <java.version>17</java.version>
         <jjwt.version>0.11.5</jjwt.version>
         <swagger.version>2.2.0</swagger.version>
-        <!-- Versiones compatibles de Apache POI -->
-        <poi.version>5.2.4</poi.version>
+        <!-- VERSIÓN COMPATIBLE Y ESTABLE -->
+        <poi.version>4.1.2</poi.version>
     </properties>
     <dependencies>
         <dependency>
@@ -110,7 +110,7 @@
 		    <version>1.12.470</version>
 		</dependency>
 		
-        <!-- Apache POI - VERSIONES COMPATIBLES -->
+        <!-- APACHE POI 4.1.2 - VERSIÓN COMPATIBLE Y ESTABLE -->
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi</artifactId>
@@ -120,16 +120,6 @@
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
             <version>${poi.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>commons-codec</groupId>
-                    <artifactId>commons-codec</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.apache.commons</groupId>
-                    <artifactId>commons-collections4</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
@@ -140,7 +130,6 @@
 
     <build>
         <plugins>
-            <!-- Plugin de compilación simplificado -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
