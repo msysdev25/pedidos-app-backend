@@ -10,12 +10,16 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
+
 
 @Service
 public class ExcelExportService {
     private static final Logger logger = LoggerFactory.getLogger(ExcelExportService.class);
+    private static final int MAX_MEMORY_THRESHOLD = 50 * 1024 * 1024; // 50MB
 
     public byte[] exportarReporte(Map<String, Object> reporte) throws IOException {
         if (reporte == null || reporte.isEmpty()) {
@@ -25,128 +29,92 @@ public class ExcelExportService {
 
         logger.info("Generando reporte Excel con datos: {}", reporte);
 
-        try (Workbook workbook = new XSSFWorkbook();
-             ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-            
-            // Crear estilos
-            CellStyle headerStyle = createHeaderStyle(workbook);
-            CellStyle currencyStyle = createCurrencyStyle(workbook);
-            CellStyle defaultStyle = createDefaultStyle(workbook);
-            CellStyle percentStyle = createPercentStyle(workbook);
+        // Usar SXSSFWorkbook para mejor manejo de memoria
+        SXSSFWorkbook workbook = null;
+        try {
+            // Crear workbook optimizado para memoria
+            workbook = new SXSSFWorkbook(100); // mantener 100 filas en memoria
+            workbook.setCompressTempFiles(true); // comprimir archivos temporales
 
-            // Crear hojas
-            createSummarySheet(workbook, reporte, headerStyle, currencyStyle, defaultStyle, percentStyle);
-            createSalesByMonthSheet(workbook, reporte, headerStyle, currencyStyle, defaultStyle);
-            createOrderStatusSheet(workbook, reporte, headerStyle, defaultStyle);
-            createHighlightsSheet(workbook, reporte, headerStyle, defaultStyle);
+            // Crear estilos una sola vez
+            Map<String, CellStyle> styles = createStyles(workbook);
 
-            // Validar workbook
-            validateWorkbook(workbook);
+            // Crear hojas de manera optimizada
+            createOptimizedSummarySheet(workbook, reporte, styles);
+            createOptimizedSalesByMonthSheet(workbook, reporte, styles);
+            createOptimizedOrderStatusSheet(workbook, reporte, styles);
+            createOptimizedHighlightsSheet(workbook, reporte, styles);
 
-            // Escribir y cerrar el workbook
+            // Generar el archivo
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
             workbook.write(outputStream);
-            workbook.close();
 
             byte[] excelBytes = outputStream.toByteArray();
-            validateExcelFile(excelBytes);
+            outputStream.close();
 
             logger.info("Archivo Excel generado exitosamente. Tamaño: {} bytes", excelBytes.length);
-            return excelBytes;
-        } catch (Exception e) {
-            logger.error("Error al generar el reporte Excel", e);
-            throw new IOException("Error al generar el archivo Excel: " + e.getMessage(), e);
-        }
-    }
 
-    // Método de prueba para generar un archivo Excel simple
-    public byte[] exportarReporteSimple() throws IOException {
-        try (Workbook workbook = new XSSFWorkbook();
-             ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-            
-            Sheet sheet = workbook.createSheet("Prueba");
-            Row row = sheet.createRow(0);
-            Cell cell = row.createCell(0);
-            cell.setCellValue("¡Hola, mundo!");
-
-            workbook.write(outputStream);
-            workbook.close();
-            byte[] excelBytes = outputStream.toByteArray();
-            validateExcelFile(excelBytes);
-            logger.info("Archivo Excel de prueba generado. Tamaño: {} bytes", excelBytes.length);
-            return excelBytes;
-        } catch (Exception e) {
-            logger.error("Error al generar archivo de prueba", e);
-            throw new IOException("Error al generar archivo de prueba: " + e.getMessage(), e);
-        }
-    }
-
-    private void validateWorkbook(Workbook workbook) {
-        if (workbook.getNumberOfSheets() == 0) {
-            throw new IllegalStateException("El workbook no contiene hojas");
-        }
-
-        for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
-            Sheet sheet = workbook.getSheetAt(i);
-            if (sheet.getPhysicalNumberOfRows() == 0) {
-                logger.warn("La hoja '{}' está vacía", sheet.getSheetName());
+            // Validación básica
+            if (excelBytes.length < 1000) {
+                throw new IOException("Archivo generado demasiado pequeño");
             }
-        }
-    }
 
-    private void validateExcelFile(byte[] excelBytes) throws IOException {
-        if (excelBytes.length < 100) {
-            throw new IOException("El archivo generado es demasiado pequeño para ser un XLSX válido");
-        }
-        if (excelBytes[0] != 0x50 || excelBytes[1] != 0x4B) {
-            throw new IOException("El archivo generado no es un ZIP válido");
-        }
+            return excelBytes;
 
-        // Validar que el archivo sea un XLSX válido
-        try (ByteArrayInputStream bais = new ByteArrayInputStream(excelBytes);
-             Workbook testWorkbook = new XSSFWorkbook(bais)) {
-            logger.info("Validación del archivo XLSX exitosa");
         } catch (Exception e) {
-            throw new IOException("El archivo generado no es un XLSX válido: " + e.getMessage(), e);
+            logger.error("Error al generar el reporte Excel: {}", e.getMessage(), e);
+            throw new IOException("Error al generar el archivo Excel: " + e.getMessage(), e);
+        } finally {
+            // Limpiar recursos
+            if (workbook != null) {
+                try {
+                    workbook.dispose(); // eliminar archivos temporales
+                    workbook.close();
+                } catch (Exception e) {
+                    logger.warn("Error al cerrar workbook: {}", e.getMessage());
+                }
+            }
+            // Forzar garbage collection
+            System.gc();
         }
     }
 
-    private CellStyle createHeaderStyle(Workbook workbook) {
-        CellStyle style = workbook.createCellStyle();
-        Font font = workbook.createFont();
-        font.setBold(true);
-        style.setFont(font);
-        style.setAlignment(HorizontalAlignment.CENTER);
-        style.setVerticalAlignment(VerticalAlignment.CENTER);
-        style.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
-        style.setFillPattern(FillPatternType.SOLID_FOREGROUND);
-        setBorderStyles(style);
-        return style;
-    }
+    private Map<String, CellStyle> createStyles(Workbook workbook) {
+        Map<String, CellStyle> styles = new HashMap<>();
 
-    private CellStyle createCurrencyStyle(Workbook workbook) {
-        CellStyle style = workbook.createCellStyle();
+        // Estilo header
+        CellStyle headerStyle = workbook.createCellStyle();
+        Font headerFont = workbook.createFont();
+        headerFont.setBold(true);
+        headerStyle.setFont(headerFont);
+        headerStyle.setAlignment(HorizontalAlignment.CENTER);
+        headerStyle.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        setBorderStyles(headerStyle);
+        styles.put("header", headerStyle);
+
+        // Estilo currency
+        CellStyle currencyStyle = workbook.createCellStyle();
         DataFormat format = workbook.createDataFormat();
-        style.setDataFormat(format.getFormat("Q#,##0.00"));
-        setBorderStyles(style);
-        style.setAlignment(HorizontalAlignment.RIGHT);
-        return style;
-    }
+        currencyStyle.setDataFormat(format.getFormat("Q#,##0.00"));
+        setBorderStyles(currencyStyle);
+        currencyStyle.setAlignment(HorizontalAlignment.RIGHT);
+        styles.put("currency", currencyStyle);
 
-    private CellStyle createPercentStyle(Workbook workbook) {
-        CellStyle style = workbook.createCellStyle();
-        DataFormat format = workbook.createDataFormat();
-        style.setDataFormat(format.getFormat("0.00%"));
-        setBorderStyles(style);
-        style.setAlignment(HorizontalAlignment.RIGHT);
-        return style;
-    }
+        // Estilo default
+        CellStyle defaultStyle = workbook.createCellStyle();
+        setBorderStyles(defaultStyle);
+        defaultStyle.setAlignment(HorizontalAlignment.LEFT);
+        styles.put("default", defaultStyle);
 
-    private CellStyle createDefaultStyle(Workbook workbook) {
-        CellStyle style = workbook.createCellStyle();
-        setBorderStyles(style);
-        style.setAlignment(HorizontalAlignment.LEFT);
-        style.setVerticalAlignment(VerticalAlignment.CENTER);
-        return style;
+        // Estilo percent
+        CellStyle percentStyle = workbook.createCellStyle();
+        percentStyle.setDataFormat(format.getFormat("0.00%"));
+        setBorderStyles(percentStyle);
+        percentStyle.setAlignment(HorizontalAlignment.RIGHT);
+        styles.put("percent", percentStyle);
+
+        return styles;
     }
 
     private void setBorderStyles(CellStyle style) {
@@ -156,159 +124,139 @@ public class ExcelExportService {
         style.setBorderLeft(BorderStyle.THIN);
     }
 
-    private void createSummarySheet(Workbook workbook, Map<String, Object> reporte, 
-                                   CellStyle headerStyle, CellStyle currencyStyle, 
-                                   CellStyle defaultStyle, CellStyle percentStyle) {
+    private void createOptimizedSummarySheet(SXSSFWorkbook workbook, Map<String, Object> reporte,
+                                             Map<String, CellStyle> styles) {
         Sheet sheet = workbook.createSheet("Resumen");
-        
-        sheet.setColumnWidth(0, 25 * 256);
-        sheet.setColumnWidth(1, 20 * 256);
 
         Row headerRow = sheet.createRow(0);
-        createCell(headerRow, 0, "Métrica", headerStyle);
-        createCell(headerRow, 1, "Valor", headerStyle);
+        createCell(headerRow, 0, "Métrica", styles.get("header"));
+        createCell(headerRow, 1, "Valor", styles.get("header"));
 
         int rowNum = 1;
-        createSummaryRow(sheet, rowNum++, "Ventas Totales", 
-                        safeGetDouble(reporte.get("totalVentas")), currencyStyle, defaultStyle);
-        createSummaryRow(sheet, rowNum++, "Total Pedidos", 
-                        safeGetLong(reporte.get("totalPedidos")), defaultStyle, defaultStyle);
-        createSummaryRow(sheet, rowNum++, "Pedidos Cancelados", 
-                        safeGetLong(reporte.get("pedidosCancelados")), defaultStyle, defaultStyle);
+        createSummaryRow(sheet, rowNum++, "Ventas Totales",
+                safeGetDouble(reporte.get("totalVentas")), styles);
+        createSummaryRow(sheet, rowNum++, "Total Pedidos",
+                safeGetLong(reporte.get("totalPedidos")), styles);
+        createSummaryRow(sheet, rowNum++, "Pedidos Cancelados",
+                safeGetLong(reporte.get("pedidosCancelados")), styles);
 
         long totalPedidos = safeGetLong(reporte.get("totalPedidos"));
         long cancelados = safeGetLong(reporte.get("pedidosCancelados"));
         double tasaCancelacion = totalPedidos > 0 ? (cancelados * 100.0 / totalPedidos) / 100 : 0;
 
-        Row rateRow = sheet.createRow(rowNum++);
-        createCell(rateRow, 0, "Tasa de Cancelación", defaultStyle);
+        Row rateRow = sheet.createRow(rowNum);
+        createCell(rateRow, 0, "Tasa de Cancelación", styles.get("default"));
         Cell rateCell = rateRow.createCell(1);
         rateCell.setCellValue(tasaCancelacion);
-        rateCell.setCellStyle(percentStyle);
-
-        autoSizeColumns(sheet, 2);
+        rateCell.setCellStyle(styles.get("percent"));
     }
 
-    private void createSalesByMonthSheet(Workbook workbook, Map<String, Object> reporte,
-                                        CellStyle headerStyle, CellStyle currencyStyle, 
-                                        CellStyle defaultStyle) {
+    private void createOptimizedSalesByMonthSheet(SXSSFWorkbook workbook, Map<String, Object> reporte,
+                                                  Map<String, CellStyle> styles) {
         Sheet sheet = workbook.createSheet("Ventas por Mes");
 
-        sheet.setColumnWidth(0, 15 * 256);
-        sheet.setColumnWidth(1, 20 * 256);
-
         Row headerRow = sheet.createRow(0);
-        createCell(headerRow, 0, "Mes", headerStyle);
-        createCell(headerRow, 1, "Ventas (Q)", headerStyle);
+        createCell(headerRow, 0, "Mes", styles.get("header"));
+        createCell(headerRow, 1, "Ventas (Q)", styles.get("header"));
 
         List<String> meses = safeGetList(reporte.get("meses"), String.class);
         List<Double> ventas = safeGetList(reporte.get("ventas"), Double.class);
 
-        if (meses == null || ventas == null || meses.size() != ventas.size()) {
-            logger.warn("Datos inválidos para Ventas por Mes: meses={}, ventas={}", meses, ventas);
-            createCell(sheet.createRow(1), 0, "No hay datos disponibles", defaultStyle);
+        if (meses == null || ventas == null || meses.isEmpty()) {
+            createCell(sheet.createRow(1), 0, "No hay datos disponibles", styles.get("default"));
             return;
         }
 
-        for (int i = 0; i < meses.size(); i++) {
+        int maxSize = Math.min(meses.size(), ventas.size());
+        for (int i = 0; i < maxSize; i++) {
             Row row = sheet.createRow(i + 1);
-            createCell(row, 0, meses.get(i) != null ? meses.get(i) : "Desconocido", defaultStyle);
+            createCell(row, 0, meses.get(i) != null ? meses.get(i) : "Desconocido", styles.get("default"));
 
             Cell cell = row.createCell(1);
             cell.setCellValue(ventas.get(i) != null ? ventas.get(i) : 0.0);
-            cell.setCellStyle(currencyStyle);
+            cell.setCellStyle(styles.get("currency"));
         }
-
-        autoSizeColumns(sheet, 2);
     }
 
-    private void createOrderStatusSheet(Workbook workbook, Map<String, Object> reporte,
-                                       CellStyle headerStyle, CellStyle defaultStyle) {
+    private void createOptimizedOrderStatusSheet(SXSSFWorkbook workbook, Map<String, Object> reporte,
+                                                 Map<String, CellStyle> styles) {
         Sheet sheet = workbook.createSheet("Estados de Pedidos");
 
-        sheet.setColumnWidth(0, 25 * 256);
-        sheet.setColumnWidth(1, 15 * 256);
-
         Row headerRow = sheet.createRow(0);
-        createCell(headerRow, 0, "Estado", headerStyle);
-        createCell(headerRow, 1, "Cantidad", headerStyle);
+        createCell(headerRow, 0, "Estado", styles.get("header"));
+        createCell(headerRow, 1, "Cantidad", styles.get("header"));
 
         List<Map<String, Object>> estados = safeGetListOfMaps(reporte.get("estadosPedidos"));
 
         if (estados.isEmpty()) {
-            logger.warn("No hay datos de estados de pedidos");
-            createCell(sheet.createRow(1), 0, "No hay datos disponibles", defaultStyle);
+            createCell(sheet.createRow(1), 0, "No hay datos disponibles", styles.get("default"));
             return;
         }
 
         for (int i = 0; i < estados.size(); i++) {
             Map<String, Object> estado = estados.get(i);
             Row row = sheet.createRow(i + 1);
-            createCell(row, 0, safeGetString(estado.get("estado")), defaultStyle);
+            createCell(row, 0, safeGetString(estado.get("estado")), styles.get("default"));
 
             Cell cell = row.createCell(1);
             cell.setCellValue(safeGetLong(estado.get("cantidad")));
-            cell.setCellStyle(defaultStyle);
+            cell.setCellStyle(styles.get("default"));
         }
-
-        autoSizeColumns(sheet, 2);
     }
 
-    private void createHighlightsSheet(Workbook workbook, Map<String, Object> reporte,
-                                      CellStyle headerStyle, CellStyle defaultStyle) {
+    private void createOptimizedHighlightsSheet(SXSSFWorkbook workbook, Map<String, Object> reporte,
+                                                Map<String, CellStyle> styles) {
         Sheet sheet = workbook.createSheet("Destacados");
 
-        sheet.setColumnWidth(0, 25 * 256);
-        sheet.setColumnWidth(1, 30 * 256);
-        sheet.setColumnWidth(2, 30 * 256);
-        sheet.setColumnWidth(3, 30 * 256);
-
         Row headerRow = sheet.createRow(0);
-        createCell(headerRow, 0, "Tipo", headerStyle);
-        createCell(headerRow, 1, "Nombre", headerStyle);
-        createCell(headerRow, 2, "Detalle 1", headerStyle);
-        createCell(headerRow, 3, "Detalle 2", headerStyle);
+        createCell(headerRow, 0, "Tipo", styles.get("header"));
+        createCell(headerRow, 1, "Nombre", styles.get("header"));
+        createCell(headerRow, 2, "Detalle 1", styles.get("header"));
+        createCell(headerRow, 3, "Detalle 2", styles.get("header"));
 
         int rowNum = 1;
 
         if (reporte.containsKey("productoMasVendido")) {
             Map<String, Object> producto = safeGetMap(reporte.get("productoMasVendido"));
-            if (!producto.isEmpty()) {
+            if (!producto.isEmpty() && !"No hay datos".equals(safeGetString(producto.get("nombre")))) {
                 Row row = sheet.createRow(rowNum++);
-                createCell(row, 0, "Producto Más Vendido", defaultStyle);
-                createCell(row, 1, safeGetString(producto.get("nombre")), defaultStyle);
-                createCell(row, 2, "Cantidad: " + safeGetLong(producto.get("cantidad")), defaultStyle);
-                createCell(row, 3, "Total: Q" + safeGetDouble(producto.get("total")), defaultStyle);
+                createCell(row, 0, "Producto Más Vendido", styles.get("default"));
+                createCell(row, 1, safeGetString(producto.get("nombre")), styles.get("default"));
+                createCell(row, 2, "Cantidad: " + safeGetLong(producto.get("cantidad")), styles.get("default"));
+                createCell(row, 3, "Total: Q" + String.format("%.2f", safeGetDouble(producto.get("total"))), styles.get("default"));
             }
         }
 
         if (reporte.containsKey("clienteFrecuente")) {
             Map<String, Object> cliente = safeGetMap(reporte.get("clienteFrecuente"));
-            if (!cliente.isEmpty()) {
+            if (!cliente.isEmpty() && !"No hay datos".equals(safeGetString(cliente.get("nombre")))) {
                 Row row = sheet.createRow(rowNum++);
-                createCell(row, 0, "Cliente Frecuente", defaultStyle);
-                createCell(row, 1, safeGetString(cliente.get("nombre")) + " (" + 
-                                  safeGetString(cliente.get("telefono")) + ")", defaultStyle);
-                createCell(row, 2, "Total pedidos: " + safeGetLong(cliente.get("pedidos")), defaultStyle);
-                createCell(row, 3, "Total gastado: Q" + safeGetDouble(cliente.get("total")), defaultStyle);
+                createCell(row, 0, "Cliente Frecuente", styles.get("default"));
+                createCell(row, 1, safeGetString(cliente.get("nombre")) + " (" +
+                        safeGetString(cliente.get("telefono")) + ")", styles.get("default"));
+                createCell(row, 2, "Total pedidos: " + safeGetLong(cliente.get("pedidos")), styles.get("default"));
+                createCell(row, 3, "Total gastado: Q" + String.format("%.2f", safeGetDouble(cliente.get("total"))), styles.get("default"));
             }
         }
 
         if (rowNum == 1) {
-            createCell(sheet.createRow(rowNum), 0, "No hay datos disponibles", defaultStyle);
+            createCell(sheet.createRow(rowNum), 0, "No hay datos disponibles", styles.get("default"));
         }
-
-        autoSizeColumns(sheet, 4);
     }
 
-    private void createSummaryRow(Sheet sheet, int rowNum, String label, Number value, 
-                                 CellStyle valueStyle, CellStyle labelStyle) {
+    private void createSummaryRow(Sheet sheet, int rowNum, String label, Number value,
+                                  Map<String, CellStyle> styles) {
         Row row = sheet.createRow(rowNum);
-        createCell(row, 0, label, labelStyle);
+        createCell(row, 0, label, styles.get("default"));
 
         Cell cell = row.createCell(1);
-        cell.setCellValue(value != null ? value.doubleValue() : 0.0);
-        cell.setCellStyle(valueStyle);
+        if (label.contains("Total")) {
+            cell.setCellValue(value != null ? value.doubleValue() : 0.0);
+            cell.setCellStyle(styles.get("currency"));
+        } else {
+            cell.setCellValue(value != null ? value.doubleValue() : 0.0);
+            cell.setCellStyle(styles.get("default"));
+        }
     }
 
     private void createCell(Row row, int column, String value, CellStyle style) {
@@ -317,12 +265,7 @@ public class ExcelExportService {
         cell.setCellStyle(style);
     }
 
-    private void autoSizeColumns(Sheet sheet, int numColumns) {
-        for (int i = 0; i < numColumns; i++) {
-            sheet.autoSizeColumn(i);
-        }
-    }
-
+    // Métodos de utilidad simplificados
     private String safeGetString(Object obj) {
         return obj != null ? obj.toString() : "";
     }
@@ -354,5 +297,31 @@ public class ExcelExportService {
     @SuppressWarnings("unchecked")
     private Map<String, Object> safeGetMap(Object obj) {
         return obj instanceof Map ? (Map<String, Object>) obj : Collections.emptyMap();
+    }
+
+    // Método de prueba simplificado
+    public byte[] exportarReporteSimple() throws IOException {
+        SXSSFWorkbook workbook = null;
+        try {
+            workbook = new SXSSFWorkbook(10);
+            Sheet sheet = workbook.createSheet("Prueba");
+            Row row = sheet.createRow(0);
+            Cell cell = row.createCell(0);
+            cell.setCellValue("¡Hola, mundo! - Prueba desde Render");
+
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            workbook.write(outputStream);
+            byte[] excelBytes = outputStream.toByteArray();
+            outputStream.close();
+
+            logger.info("Archivo Excel de prueba generado. Tamaño: {} bytes", excelBytes.length);
+            return excelBytes;
+        } finally {
+            if (workbook != null) {
+                workbook.dispose();
+                workbook.close();
+            }
+            System.gc();
+        }
     }
 }
